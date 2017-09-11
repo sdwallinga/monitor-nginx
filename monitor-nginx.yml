@@ -1,0 +1,73 @@
+---
+- hosts: nginx
+
+  tasks:
+  - name: Check for userparameter_nginx.conf
+    stat:
+      path: /etc/zabbix/zabbix_agentd.d/userparameter_nginx.conf
+    register: param_check
+
+  - name: Create userparameter_nginx.conf 
+    file:
+      path: /etc/zabbix/zabbix_agentd.d/userparameter_nginx.conf
+      state: touch
+    when: param_check.stat.exists == False
+
+  - name: Set userparameter_nginx
+    blockinfile:
+      path: /etc/zabbix/zabbix_agentd.d/userparameter_nginx.conf
+      block: |
+        UserParameter=nginx.status[*],/srv/zabbix/libexec/nginx.sh $1
+
+  - name: Check for nginx stats stub
+    stat:
+      path: /etc/nginx/conf.d/stats.conf
+    register: stats_check
+
+  - name: Create nginx status stub
+    file:
+      path: /etc/nginx/conf.d/stats.conf
+      state: touch
+    when: stats_check.stat.exists == False    
+
+  - name: Enable nginx stats stub
+    blockinfile:
+      path: /etc/nginx/conf.d/stats.conf
+      block: |
+        server {
+          listen 10061;
+          location /nginx_status {
+            stub_status on;
+            access_log off;
+            allow 127.0.0.1;
+            deny all;
+          }
+        }
+
+  - name: Create Zabbix libexec directory
+    file:
+      path: /srv/zabbix/libexec
+      state: directory
+
+  - name: Copy Zabbix check script
+    copy:
+      src: /etc/ansible/scripts/nginx.sh
+      dest: /srv/zabbix/libexec/nginx.sh
+      owner: root
+      group: root
+      mode: u+rw,g+wx,o+rwx
+
+  - name: Restart zabbix agent
+    systemd:
+      state: restarted
+      name: zabbix-agent
+
+  - name: See if nginx restart is necessary
+    shell: '/srv/zabbix/libexec/nginx.sh accepts | wc -l'
+    register: script_output
+    
+  - name: Restart nginx
+    systemd:
+      state: restarted
+      name: nginx
+    when: script_output.stdout == "0"
